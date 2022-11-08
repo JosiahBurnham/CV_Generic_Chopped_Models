@@ -17,7 +17,7 @@ class AlexNet():
     """ A implementation of the AlexNet Model, where the caller can specify what block
         of the model is desired.
     """
-    def __init__(self, wd, num_outputs, output=True):
+    def __init__(self, wd, num_outputs, l2, pool_rate, output=True, prog_pool = True):
         """property constructor for AlexNet class
 
         Args:
@@ -28,20 +28,23 @@ class AlexNet():
         self.wd = wd
         self.num_outputs = num_outputs
         self.output = output
+        self.l2 = l2
+        self.pool_rate = pool_rate
+        self.prog_pool = prog_pool
 
         # Conv Layers
         #----------------------------------------
-        self.conv1 = layers.Conv2D(filters=96, kernel_size=(11,11), strides=(4,4), padding='same', activation="relu", name="Conv1", trainable=False)
-        self.conv2 = GroupedConv2D(128, (5,5), "GroupConv1", trainable=False)
-        self.conv3 = layers.Conv2D(filters=384, kernel_size=(3,3), strides=(1,1), padding='same', activation="relu", name="Conv2", trainable=False)
-        self.conv4 = GroupedConv2D(192, (3,3), "GroupConv2", trainable=False)
-        self.conv5 = GroupedConv2D(128, (3,3), "GroupConv3", trainable=False)
+        self.conv1 = layers.Conv2D(filters=96, kernel_size=(11,11), strides=(4,4), padding='same', activation="relu", name="Conv1", trainable=False,  kernel_regularizer=keras.regularizers.l2(self.l2))
+        self.conv2 = GroupedConv2D(128, (5,5), "GroupConv1", trainable=False,  kernel_regularizer=keras.regularizers.l2(self.l2))
+        self.conv3 = layers.Conv2D(filters=384, kernel_size=(3,3), strides=(1,1), padding='same', activation="relu", name="Conv2", trainable=False,  kernel_regularizer=keras.regularizers.l2(self.l2))
+        self.conv4 = GroupedConv2D(192, (3,3), "GroupConv2", trainable=False,  kernel_regularizer=keras.regularizers.l2(self.l2))
+        self.conv5 = GroupedConv2D(128, (3,3), "GroupConv3", trainable=False,  kernel_regularizer=keras.regularizers.l2(self.l2))
 
         # Fully Connected Layers
         #----------------------------------------
-        self.hidden_dense1 = layers.Dense(4096, activation="relu", name="Hidden1", trainable=False)
-        self.hidden_dense2 = layers.Dense(4096, activation="relu", name="Hidden2", trainable=False)
-        self.output_layer = layers.Dense(num_outputs,  activation="softmax", name="Output", trainable=True)
+        self.hidden_dense1 = layers.Dense(4096, activation="relu", name="Hidden1", trainable=False,  kernel_regularizer=keras.regularizers.l2(self.l2))
+        self.hidden_dense2 = layers.Dense(4096, activation="relu", name="Hidden2", trainable=False,  kernel_regularizer=keras.regularizers.l2(self.l2))
+        self.output_layer = layers.Dense(num_outputs,  activation="softmax", name="Output", trainable=True,  kernel_regularizer=keras.regularizers.l2(self.l2))
 
         # Intermediary Layers
         #----------------------------------------
@@ -56,8 +59,9 @@ class AlexNet():
             layer_level (int): the block layer that is desired (inclusive)
 
         Returns:
-            keras.model: a VGG_19 model that only contains the specified blocks
+            keras.model: a AlexNet model that only contains the specified blocks
         """
+        ds_size = 1 # so multiplying doesn't give me a 0
         self.__set_layer_weights()
 
         model = keras.Sequential([], name="Alexnet")
@@ -68,15 +72,20 @@ class AlexNet():
             model.add(self.conv1)
         if(layer_level >= 2):
             model.add(LocalResponseNormalization(depth_radius=2, bias=5, alpha=0.0001, beta=0.75, name="LRN1"))
-        if(layer_level >= 3):
+        if(layer_level > 3):
             model.add(layers.MaxPooling2D(pool_size=(3,3), strides=(2,2), padding='valid', data_format="channels_last", name="MaxPool_1"))
+        if (layer_level == 3):
+            model.add(layers.MaxPooling2D(pool_size=(ds_size, ds_size), strides=(ds_size,ds_size), padding='valid', data_format="channels_last", name="prog_pool"))
+        
 
         if(layer_level >= 4): # block 2
             model.add(self.conv2)
         if(layer_level >= 5):
             model.add(LocalResponseNormalization(depth_radius=2, bias=5, alpha=0.0001, beta=0.75, name="LRN2"))
-        if(layer_level >= 6):
+        if(layer_level > 6):
             model.add(layers.MaxPooling2D(pool_size=(3,3), strides=(2,2), padding='valid', data_format="channels_last", name="MaxPool_2"))
+        if(layer_level == 6):
+            model.add(layers.MaxPooling2D(pool_size=(ds_size, ds_size), strides=(ds_size,ds_size), padding='valid', data_format="channels_last", name="prog_pool"))
 
         if(layer_level >= 7): # block 3
             model.add(self.conv3)
@@ -90,8 +99,10 @@ class AlexNet():
             model.add(self.conv5)
         if(layer_level >= 12):
             model.add(LocalResponseNormalization(depth_radius=2, bias=5, alpha=0.0001, beta=0.75, name="LRN5"))
-        if(layer_level >= 13):
+        if(layer_level > 13):
             model.add(layers.MaxPooling2D(pool_size=(3,3), strides=(2,2), padding='valid', data_format="channels_last", name="MaxPool_3"))      
+        if(layer_level == 13):
+            model.add(layers.MaxPooling2D(pool_size=(ds_size, ds_size), strides=(ds_size,ds_size), padding='valid', data_format="channels_last", name="prog_pool"))
 
         if(layer_level >= 14): # block 4  
             model.add(self.flatten)
@@ -103,8 +114,12 @@ class AlexNet():
             model.add(self.hidden_dense2)
         if(layer_level >= 18):
             model.add(layers.Dropout(0.5))
-
             
+        
+        if(self.prog_pool and layer_level not in [3,6,13]):
+            model.add(layers.MaxPooling2D(pool_size=(ds_size, ds_size), strides=(ds_size,ds_size), padding='valid', data_format="channels_last", name="prog_pool"))
+
+
         if(self.output and layer_level < 14):
             model.add(self.flatten)
             model.add(self.output_layer)
